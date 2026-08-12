@@ -91,7 +91,7 @@ build_kernel() {
 	if is_true "${USE_LLVM:-false}"; then
 		cc="clang"
 	else
-		# Use GCC for older kernels (4.x) to avoid Clang/GNU assembler incompatibility.
+		# For older kernels (4.x), try GCC first to avoid Clang/GNU assembler incompatibility.
 		# Extract the CROSS_COMPILE path from GCC_64 (e.g. "CROSS_COMPILE=/path/to/aarch64-linux-android-")
 		local gcc_prefix
 		gcc_prefix=$(printf '%s' "${GCC_64:-}" | sed -n 's/.*CROSS_COMPILE=\([^ ]*\).*/\1/p')
@@ -99,8 +99,20 @@ build_kernel() {
 			cc="${gcc_prefix}gcc"
 			info "Using GCC compiler: $cc"
 		else
-			cc="clang"
-			warn "GCC compiler not found at '${gcc_prefix}gcc', falling back to Clang"
+			# GCC not found; use Clang with -fintegrated-as to bypass GNU assembler
+			# The 4.14 kernel doesn't support LLVM_IAS=1, so we pass -fintegrated-as
+			# directly to Clang to force use of its integrated assembler.
+			cc="clang -fintegrated-as"
+			warn "GCC compiler not found at '${gcc_prefix}gcc', using Clang with integrated assembler"
+			# Debug: list GCC directory contents
+			if [ -d "${WORKSPACE}/gcc-64" ]; then
+				info "GCC-64 directory contents:"
+				ls -la "${WORKSPACE}/gcc-64/" 2>/dev/null | head -20 | sed 's/^/  /'
+				if [ -d "${WORKSPACE}/gcc-64/bin" ]; then
+					info "GCC-64/bin contents:"
+					ls "${WORKSPACE}/gcc-64/bin/" 2>/dev/null | head -20 | sed 's/^/  /'
+				fi
+			fi
 		fi
 	fi
 	if is_true "${ENABLE_CCACHE:-true}" && command -v ccache >/dev/null; then
