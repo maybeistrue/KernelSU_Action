@@ -86,33 +86,25 @@ build_kernel() {
 		export KSU_EXPECTED_SIZE KSU_EXPECTED_HASH
 		info "using custom manager signature (size=${KSU_EXPECTED_SIZE})"
 	fi
-	local cc args
+	local cc args kcflags
 	args=$(make_args)
+	kcflags="-Wno-error=strict-prototypes"
 	if is_true "${USE_LLVM:-false}"; then
 		cc="clang"
 	else
 		# For older kernels (4.x), try GCC first to avoid Clang/GNU assembler incompatibility.
-		# Extract the CROSS_COMPILE path from GCC_64 (e.g. "CROSS_COMPILE=/path/to/aarch64-linux-android-")
 		local gcc_prefix
 		gcc_prefix=$(printf '%s' "${GCC_64:-}" | sed -n 's/.*CROSS_COMPILE=\([^ ]*\).*/\1/p')
 		if [ -n "$gcc_prefix" ] && [ -x "${gcc_prefix}gcc" ]; then
 			cc="${gcc_prefix}gcc"
 			info "Using GCC compiler: $cc"
 		else
-			# GCC not found; use Clang with -fintegrated-as to bypass GNU assembler
-			# The 4.14 kernel doesn't support LLVM_IAS=1, so we pass -fintegrated-as
-			# directly to Clang to force use of its integrated assembler.
-			cc="clang -fintegrated-as"
-			warn "GCC compiler not found at '${gcc_prefix}gcc', using Clang with integrated assembler"
-			# Debug: list GCC directory contents
-			if [ -d "${WORKSPACE}/gcc-64" ]; then
-				info "GCC-64 directory contents:"
-				ls -la "${WORKSPACE}/gcc-64/" 2>/dev/null | head -20 | sed 's/^/  /'
-				if [ -d "${WORKSPACE}/gcc-64/bin" ]; then
-					info "GCC-64/bin contents:"
-					ls "${WORKSPACE}/gcc-64/bin/" 2>/dev/null | head -20 | sed 's/^/  /'
-				fi
-			fi
+			# GCC not found; use Clang with -fintegrated-as in KCFLAGS to bypass GNU assembler.
+			# We pass -fintegrated-as via KCFLAGS (not CC) to avoid word-splitting issues
+			# when make passes CC through MAKEFLAGS to sub-make.
+			cc="clang"
+			kcflags="$kcflags -fintegrated-as"
+			warn "GCC compiler not found, using Clang with -fintegrated-as in KCFLAGS"
 		fi
 	fi
 	if is_true "${ENABLE_CCACHE:-true}" && command -v ccache >/dev/null; then
@@ -120,15 +112,17 @@ build_kernel() {
 		export CCACHE_DIR="${CCACHE_DIR:-${WORKSPACE}/.ccache}"
 		info "ccache enabled (dir: ${CCACHE_DIR})"
 	fi
+	# Build make command as an array to properly handle KCFLAGS with spaces
+	local -a make_args_arr
+	read -ra make_args_arr <<< "$args"
 	cd "$KERNEL_DIR"
-	info "make ${args} ${KERNEL_CONFIG}"
-	# shellcheck disable=SC2086
-	make -j"$(nproc --all)" CC="$cc" $args "${KERNEL_CONFIG}" \
-		|| die "defconfig generation failed"
-	info "make ${args}"
-	# shellcheck disable=SC2086
-	make -j"$(nproc --all)" CC="$cc" $args \
-		|| die "kernel build failed"
+	info "make ${args} KCFLAGS=\"${kcflags}\" ${KERNEL_CONFIG}"
+	local -a cmd
+	cmd=(make -j"$(nproc --all)" CC="$cc" "${make_args_arr[@]}" "KCFLAGS=${kcflags}" "${KERNEL_CONFIG}")
+	"${cmd[@]}" || die "defconfig generation failed"
+	info "make ${args} KCFLAGS=\"${kcflags}\""
+	cmd=(make -j"$(nproc --all)" CC="$cc" "${make_args_arr[@]}" "KCFLAGS=${kcflags}")
+	"${cmd[@]}" || die "kernel build failed"
 	endgroup
 }
 # --------------------------------------------------------------- verify ---
