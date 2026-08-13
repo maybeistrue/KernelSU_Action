@@ -76,12 +76,25 @@ make_args() {
 		[ -n "${GCC_64:-}" ] || printf ' CROSS_COMPILE=aarch64-linux-gnu-'
 	fi
 }
+fix_may_mount() {
+	local ns="${KERNEL_DIR}/fs/namespace.c"
+	[ -f "$ns" ] || return 0
+	grep -q 'may_mount' "$ns" || return 0
+	local first_use first_def
+	first_use=$(grep -n 'may_mount()' "$ns" | head -1 | cut -d: -f1)
+	first_def=$(grep -n 'static inline bool may_mount' "$ns" | head -1 | cut -d: -f1)
+	if [ -n "$first_use" ] && [ -n "$first_def" ] && [ "$first_use" -lt "$first_def" ]; then
+		sed -i "${first_use}i static inline bool may_mount(void);" "$ns"
+		info "Added forward declaration of may_mount() before line ${first_use}"
+	fi
+}
 build_kernel() {
 	group "Building kernel"
 	export PATH="${CLANG_PATH:-}:${PATH}"
 	export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-Github-Action}
 	export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-kernelsu-action}
 	unset DISABLE_LTO
+	fix_may_mount
 	if [ -n "${KSU_EXPECTED_SIZE:-}" ] && [ -n "${KSU_EXPECTED_HASH:-}" ]; then
 		export KSU_EXPECTED_SIZE KSU_EXPECTED_HASH
 		info "using custom manager signature (size=${KSU_EXPECTED_SIZE})"
