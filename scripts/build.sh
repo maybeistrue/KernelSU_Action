@@ -80,12 +80,23 @@ fix_may_mount() {
 	local ns="${KERNEL_DIR}/fs/namespace.c"
 	[ -f "$ns" ] || return 0
 	grep -q 'may_mount' "$ns" || return 0
+	grep -q 'static inline bool may_mount' "$ns" || return 0
 	local first_use first_def
 	first_use=$(grep -n 'may_mount()' "$ns" | head -1 | cut -d: -f1)
-	first_def=$(grep -n 'static inline bool may_mount' "$ns" | head -1 | cut -d: -f1)
+	first_def=$(grep -n 'static inline bool may_mount(void)$' "$ns" | head -1 | cut -d: -f1)
 	if [ -n "$first_use" ] && [ -n "$first_def" ] && [ "$first_use" -lt "$first_def" ]; then
-		sed -i "${first_use}i static inline bool may_mount(void);" "$ns"
-		info "Added forward declaration of may_mount() before line ${first_use}"
+		local target_line
+		target_line=$(grep -n 'static int can_umount' "$ns" | head -1 | cut -d: -f1)
+		if [ -z "$target_line" ]; then
+			target_line=$(grep -n 'int path_umount' "$ns" | head -1 | cut -d: -f1)
+		fi
+		if [ -n "$target_line" ]; then
+			sed -i "${target_line}i static inline bool may_mount(void);" "$ns"
+			info "Added forward declaration of may_mount() before line ${target_line}"
+		else
+			sed -i '1i static inline bool may_mount(void);' "$ns"
+			info "Added forward declaration of may_mount() at top of file"
+		fi
 	fi
 }
 build_kernel() {
